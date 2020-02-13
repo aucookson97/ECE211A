@@ -20,7 +20,7 @@ rect_crop_conv = [(orig_size-256)/2 (orig_size-256)/2 255 255]; % Take Center 25
 y_noiseless_crop = imcrop(y_noiseless, rect_crop_conv);
 y_noisy_crop = imcrop(y_noisy, rect_crop_conv);
 
-R = 256; % Image Data Range
+R = 255; % Image Data Range
 
 psnr_x_ynoiseless = PSNR(x, y_noiseless_crop, R);
 psnr_x_ynoisy = PSNR(x, y_noisy_crop, R);
@@ -41,7 +41,7 @@ x_hat_noiseless_naive = imcrop(ifft2(Y_noiseless ./ H), rect_crop);
 psnr_x_noiseless_naive = PSNR(x, x_hat_noiseless_naive, R);
 psnr_x_noisy_naive = PSNR(x, x_hat_noisy_naive, R);
 [ssim_x_noiseless_naive, ~] = ssim(x_hat_noiseless_naive, x);
-[ssim_x_noisy_naive, ~] = ssim(x_hat_noiseless_naive, x);
+[ssim_x_noisy_naive, ~] = ssim(x_hat_noisy_naive, x);
 
 % Wiener Deconvolution of Noiseles and Noisy Y
 X = fft2(x, 276, 276);
@@ -51,4 +51,44 @@ x_hat_noiseless_wiener = ifft2((psd_h ./ (psd_h + 1 ./ psd_x)) .* (Y_noiseless .
 x_hat_noiseless_wiener = imcrop(x_hat_noiseless_wiener, rect_crop);
 x_hat_noisy_wiener = ifft2((psd_h ./ (psd_h + 1 ./ psd_x)) .* (Y_noisy ./ H));
 x_hat_noisy_wiener = imcrop(x_hat_noisy_wiener, rect_crop);
+
+% Calculate PSNR and SSIM of X_Hat Wiener Exact
+psnr_x_noisy_wiener = PSNR(x, x_hat_noisy_wiener, R);
+[ssim_x_noisy_wiener, ~] = ssim(x_hat_noisy_wiener, x);
+
+% Power Spectral Density Estimation
+X = fftshift(fft2(x, 276, 276));
+noise = y_noisy - y_noiseless;
+N = fftshift(fft2(noise, 276, 276));
+psd_x = log10(X .* conj(X));
+psd_n = log10(N .* conj(N));
+
+% Prepare Images
+img_2 = imread('69015.jpg');
+img_3 = imread('295087.jpg');
+
+rect_2 = [0 0 256 256];
+img_cropped_2 = imcrop(img_2, rect_2); % Crop Image to 256 x 256 x 3
+img_grey_2 = rgb2gray(img_cropped_2); % Convert Image to GreyScale
+x_2 = im2double(img_grey_2);
+
+rect_3 = [100 50 255 255];
+img_cropped_3 = imcrop(img_3, rect_3); % Crop Image to 256 x 256 x 3
+img_grey_3 = rgb2gray(img_cropped_3); % Convert Image to GreyScale
+x_3 = im2double(img_grey_3);
+
+X_2 = fftshift(fft2(x_2));
+X_3 = fftshift(fft2(x_3));
+
+psd_x_2 = log10(X_2 .* conj(X_2));
+psd_x_3 = log10(X_3 .* conj(X_3));
+
+
+imagesc(psd_x_3);
+%surf(psd_x)
+%colormap(contrast(psd_x));
+
+
+
+
 
