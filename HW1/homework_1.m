@@ -83,9 +83,17 @@ X_3 = fftshift(fft2(x_3));
 psd_x_2 = log10(X_2 .* conj(X_2));
 psd_x_3 = log10(X_3 .* conj(X_3));
 
+% Estimate PSD Proportional to 1/w^2
+[X, Y] = meshgrid(linspace(-137, 138, 276));
 
-imagesc(psd_x_3);
-%surf(psd_x)
+%psd_est = (log10(1 ./ (X.^2))) .* (log10(1 ./ (Y.^2)));
+psd_est = (6 + log10(1 ./ (X.^2) + 1 ./ (Y.^2)));
+psd_est(isinf(psd_est)) = 6;
+
+x_hat_wiener_est = ifft2((psd_h ./ (psd_h + 1 ./ psd_est)) .* (Y_noisy ./ H));
+x_hat_wiener_est = imcrop(x_hat_wiener_est, rect_crop);
+
+imshow(x_hat_wiener_est);
 %colormap(contrast(psd_x));
 
 
