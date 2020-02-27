@@ -6,8 +6,10 @@ ECE211A Homework 2
 """
 
 from PIL import Image, ImageDraw, ImageFont
+from sklearn.linear_model import orthogonal_mp
 import skimage.metrics as metrics
 import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
 import numpy as np
 import cv2
 import os
@@ -28,43 +30,52 @@ def extract_patches(img, patch_size=8):
             patches.append(patch)
     return patches
 
-def save_patches(y_patches, m_patches, grid_size=5):
-    indices = random.sample(range(len(y_patches)), grid_size**2)
+# Save a Sampled Grid of Dictionary Atoms
+def save_patch(filename, patches, grid_size=5):
+    indices = random.sample(range(patches.shape[0]), grid_size**2)
     
-    #  %matplotlib qt
-    f_y, axarr_y = plt.subplots(grid_size, grid_size)
-    f_m, axarr_m = plt.subplots(grid_size, grid_size)
+    f_a = plt.figure(figsize = (grid_size,grid_size))
+    gs = gridspec.GridSpec(grid_size, grid_size)
+    gs.update(wspace=0.025, hspace=0.05)
+    
+    #f_a, axarr_a = plt.subplots(grid_size, grid_size)
 
+
+    for i in range(grid_size**2):
+        ax = plt.subplot(gs[i])
+        ax.imshow(patches[indices[i]], cmap='gray')
+        
+        ax.set_xticklabels([])
+        ax.set_yticklabels([])
+    f_a.savefig(filename)
+
+# Save a Sampled Grid of Patches and Masks
+def save_patches(y_patches, m_patches, grid_size=5):
+    indices = random.sample(range(y_patches.shape[0]), grid_size**2)
     
-    i = 0
-    for y in range(grid_size):
-        for x in range(grid_size):
-            axarr_y[y, x].imshow(y_patches[indices[i]], cmap='gray')
-            axarr_m[y, x].imshow(m_patches[indices[i]], cmap='gray')
-            i += 1
-            
-            axarr_y[y, x].set_xticklabels([])
-            axarr_y[y, x].set_yticklabels([])
-            axarr_m[y, x].set_xticklabels([])
-            axarr_m[y, x].set_yticklabels([])
-            
-    f_y.savefig('y_patches.png')
-    f_m.savefig('m_patches.png')
-            
-    # patch_size = y_patches[0].shape[0]
-    # img_y = np.zeros((patch_size*grid_size, patch_size*grid_size))
-    # img_m = np.zeros((patch_size*grid_size, patch_size*grid_size))
-    # indices = random.sample(range(len(y_patches)), grid_size**2)
+    f_y = plt.figure(figsize = (grid_size,grid_size))
+    gs = gridspec.GridSpec(grid_size, grid_size)
+    gs.update(wspace=0.025, hspace=0.05)
+
+    for i in range(grid_size**2):
+        ax = plt.subplot(gs[i])
+        ax.imshow(y_patches[indices[i]], cmap='gray')
+        
+        ax.set_xticklabels([])
+        ax.set_yticklabels([])
+        
+    f_y.savefig('y_patches_2.png')
     
-    # i = 0
-    # for y in range(grid_size):
-    #     for x in range(grid_size):
-    #         img_y[y*patch_size:(y+1)*patch_size, x*patch_size:(x+1)*patch_size] = y_patches[indices[i]]
-    #         img_m[y*patch_size:(y+1)*patch_size, x*patch_size:(x+1)*patch_size] = m_patches[indices[i]]
-    #         i += 1
-            
-    #cv2.imwrite('y_patches.png', img_y)
-    #cv2.imwrite('m_patches.png', img_m)
+    f_m = plt.figure(figsize = (grid_size,grid_size))
+
+    for i in range(grid_size**2):
+        ax = plt.subplot(gs[i])
+        ax.imshow(m_patches[indices[i]], cmap='gray')
+        
+        ax.set_xticklabels([])
+        ax.set_yticklabels([])  
+    
+    f_m.savefig('m_patches_2.png')
 
 
 def draw_text(img, invert=False):
@@ -120,17 +131,33 @@ def load_images():
     m_test_missing = cv2.imread('m_test_missing.png', 0)
     return (y_train, y_test, y_test_missing, m_test_missing)
 
+# Returns Unit Norm Dictionary of Patches
+def random_dict(num_atoms=512, patch_size=8, value_range=256):
+    d = np.random.randint(0, value_range, size=(num_atoms, patch_size, patch_size)).astype(np.float32) 
+    for atom in d:
+        atom /= np.linalg.norm(atom)
+    return d
+
+# Orthogonal Matching Pursuit
+def OMP(A, patch, S=20):
+    coef = orthogonal_mp(A, patch, n_nonzero_coefs=S)
+    return coef
+
 if __name__=='__main__':
-    prepare_images()
+    #prepare_images()
     
     (y_train, y_test, y_test_missing, m_test_missing) = load_images()
     
-    calc_metrics(y_test, y_test_missing)
+    #calc_metrics(y_test, y_test_missing)
     
     y_patches = extract_patches(y_test_missing)
     m_patches = extract_patches(m_test_missing)
     
-    save_patches(y_patches, m_patches)
+    #save_patches(y_patches, m_patches)
     
+    A_dict = random_dict()
+    #save_patches(np.asarray(y_patches), np.asarray(m_patches))
+    
+    print (OMP(A_dict, y_patches[0]))
     
     
