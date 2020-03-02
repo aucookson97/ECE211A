@@ -7,7 +7,7 @@ ECE211A Homework 2
 
 from PIL import Image, ImageDraw, ImageFont
 from sklearn.linear_model import orthogonal_mp
-import skimage.metrics as metrics
+#import skimage.metrics as metrics
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import numpy as np
@@ -29,6 +29,18 @@ def extract_patches(img, patch_size=8):
             patch = img[y*patch_size:(y+1)*patch_size, x*patch_size:(x+1)*patch_size]
             patches.append(patch)
     return patches
+
+# Turn a List of Patches into an Image
+def recombine_patches(patches):
+    new_img = np.zeros((IMG_SIZE, IMG_SIZE))
+    patch_size = patches.shape[1]
+    num_patches = IMG_SIZE // patch_size
+    i = 0  
+    for y in range(num_patches):
+        for x in range(num_patches):
+            new_img[y*patch_size:(y+1)*patch_size, x*patch_size:(x+1)*patch_size] = patches[i]
+            i += 1
+    return new_img
 
 # Save a Sampled Grid of Dictionary Atoms
 def save_patch(filename, patches, grid_size=5):
@@ -78,6 +90,7 @@ def save_patches(y_patches, m_patches, grid_size=5):
     f_m.savefig('m_patches_2.png')
 
 
+# Draw Text onto an Image
 def draw_text(img, invert=False):
     #font = ImageFont.truetype("sans-serif.ttf", 16)
     font = ImageFont.truetype('Adequate-ExtraLight.ttf', 30)
@@ -132,32 +145,110 @@ def load_images():
     return (y_train, y_test, y_test_missing, m_test_missing)
 
 # Returns Unit Norm Dictionary of Patches
-def random_dict(num_atoms=512, patch_size=8, value_range=256):
-    d = np.random.randint(0, value_range, size=(num_atoms, patch_size, patch_size)).astype(np.float32) 
-    for atom in d:
-        atom /= np.linalg.norm(atom)
+def random_dict(num_atoms=512, patch_size=8):
+    d = np.random.random(size=(patch_size*patch_size, num_atoms)).astype(np.float32) 
+    d = d / np.linalg.norm(d, axis=0, keepdims=True)
     return d
 
+def K_SVD(y_train, tol=100, num_iter=100, S=20):
+    patch_size = 8
+    num_patches = (IMG_SIZE // patch_size)**2
+    y_patches_train = np.asarray(extract_patches(y_train)).reshape((num_patches, patch_size**2))
+    A_ksvd = random_dict()
+    num_atoms = A_ksvd.shape[1]
+    y_patches = []
+    
+    # FlattenPatches
+    for patch in y_patches_train:
+         y_patches.append(patch.flatten())
+    
+    for i in range(num_iter):
+        print ('Iteration {}'.format(i+1))
+        
+        # Calculate x
+        x = np.zeros((num_atoms, num_patches))
+        for i, patch in enumerate(y_patches):
+            x[:, i] = orthogonal_mp(A_ksvd, patch, n_nonzero_coefs=S)
+            
+        # Residual Threshold Termination
+        error = residual_error(y_patches_train, A_ksvd, x)
+        print ('\t Residual Error: {}'.format(error))
+        if error <= tol: 
+            return (A_ksvd, True)
+        
+        # Update Dictionary atom-by-atom
+        for atom in range(num_atoms):
+            wk = np.nonzero(x[atom, :])[0]
+            
+            if np.sum(wk) == 0:
+                continue
+
+            A_ksvd[:, atom] = 0   
+            
+            Ek = y_patches_train.copy().T
+            #for j in range(num_atoms):  
+               # aj = np.expand_dims(A_ksvd[:, j], axis=1) #64, 1
+                #x_tj = np.expand_dims(x[j, :], axis=0) #1, 1024
+                #Ek = Ek - aj.dot(x_tj)
+            Ek = Ek - A_ksvd.dot(x)
+
+            Ek_ohm = Ek[:, wk]
+            
+            # Update A, x with SVD
+            U, D, V = np.linalg.svd(Ek_ohm, full_matrices=True)
+            A_ksvd[:, atom] = U[:, 0]
+            x[atom, wk] = (V[:, 0] * D[0]).T
+            
+    return (A_ksvd, False)
+    
+# Calculate Residual = ||Y - Ax||    
+def residual_error(y_patches, A, x):
+    error = 0.0
+    for i, patch in enumerate(y_patches):
+        estimate = A.dot(x[:, i])
+        error += np.linalg.norm(patch - estimate)
+    return error
+                
+# Recover Image Patches Using OMP
+def recover_OMP(A, y_patches, m_patches, S=20):
+    patches_recovered = np.zeros((1024, 8, 8))
+    
+    for i in range(len(y_patches)):
+        patches_recovered[i] = A.dot(_OMP_Patch(A, y_patches[i], m_patches[i])).reshape((8, 8))
+    return recombine_patches(patches_recovered)
+        
 # Orthogonal Matching Pursuit
-def OMP(A, patch, S=20):
-    coef = orthogonal_mp(A, patch, n_nonzero_coefs=S)
+def _OMP_Patch(A, y_patch, m_patch, S=20):
+    y_patch = y_patch.flatten()
+    m_patch = m_patch.flatten()
+    y_patch_masked = y_patch[np.where(m_patch != 0)]
+    A_masked = A[np.where(m_patch != 0)]
+    coef = orthogonal_mp(A_masked, y_patch_masked, n_nonzero_coefs=S)
     return coef
+
 
 if __name__=='__main__':
     #prepare_images()
     
     (y_train, y_test, y_test_missing, m_test_missing) = load_images()
     
+    y_train = y_train / 255
+    y_test = y_test / 255 
+    y_test_missing = y_test_missing / 255
+    
     #calc_metrics(y_test, y_test_missing)
     
-    y_patches = extract_patches(y_test_missing)
+    y_patches_missing = extract_patches(y_test_missing)
+    y_patches_test = extract_patches(y_test)
     m_patches = extract_patches(m_test_missing)
-    
-    #save_patches(y_patches, m_patches)
-    
-    A_dict = random_dict()
+    A_ksvd, converged = K_SVD(y_train, tol = 10, num_iter=16)
+    img_recovered = recover_OMP(A_ksvd, y_patches_missing, m_patches)
     #save_patches(np.asarray(y_patches), np.asarray(m_patches))
-    
-    print (OMP(A_dict, y_patches[0]))
+
+    #img_recovered = recover_OMP(random_dict(), y_patches_missing, m_patches)
+    plt.imshow(img_recovered, cmap='gray')
+    plt.show()
+    #cv2.imwrite('omp_result.png',img_recovered)
+
     
     
