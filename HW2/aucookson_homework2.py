@@ -6,7 +6,7 @@ ECE211A Homework 2
 """
 
 from PIL import Image, ImageDraw, ImageFont
-from sklearn.linear_model import orthogonal_mp
+from sklearn.linear_model import OrthogonalMatchingPursuit
 #import skimage.metrics as metrics
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
@@ -95,6 +95,7 @@ def draw_text(img, invert=False):
     #font = ImageFont.truetype("sans-serif.ttf", 16)
     font = ImageFont.truetype('Adequate-ExtraLight.ttf', 30)
     d = ImageDraw.Draw(img)
+    d.fontmode='1'
     
     fill_col = 255 if not invert else 0
     
@@ -144,12 +145,6 @@ def load_images():
     m_test_missing = cv2.imread('m_test_missing.png', 0)
     return (y_train, y_test, y_test_missing, m_test_missing)
 
-# Returns Unit Norm Dictionary of Patches
-def random_dict(num_atoms=512, patch_size=8):
-    d = np.random.random(size=(patch_size*patch_size, num_atoms)).astype(np.float32) 
-    d = d / np.linalg.norm(d, axis=0, keepdims=True)
-    return d
-
 def K_SVD(y_train, tol=100, num_iter=100, S=20):
     patch_size = 8
     num_patches = (IMG_SIZE // patch_size)**2
@@ -167,18 +162,21 @@ def K_SVD(y_train, tol=100, num_iter=100, S=20):
         
         # Calculate x
         x = np.zeros((num_atoms, num_patches))
-        for i, patch in enumerate(y_patches):
-            x[:, i] = orthogonal_mp(A_ksvd, patch, n_nonzero_coefs=S)
-            
+        omp = OrthogonalMatchingPursuit(S, fit_intercept=False)
+        # for i, patch in enumerate(y_patches):
+        #     omp.fit(A_ksvd, patch)
+        #     x[:, i] = omp.coef_
+        omp.fit(A_ksvd, np.asarray(y_patches).T)  
+        coef = omp.coef_.T
         # Residual Threshold Termination
-        error = residual_error(y_patches_train, A_ksvd, x)
+        error = np.linalg.norm(A_ksvd.dot(coef) - np.asarray(y_patches).T)
         print ('\t Residual Error: {}'.format(error))
         if error <= tol: 
             return (A_ksvd, True)
         
         # Update Dictionary atom-by-atom
         for atom in range(num_atoms):
-            wk = np.nonzero(x[atom, :])[0]
+            wk = np.nonzero(coef[atom, :])[0]
             
             if np.sum(wk) == 0:
                 continue
@@ -190,14 +188,14 @@ def K_SVD(y_train, tol=100, num_iter=100, S=20):
                # aj = np.expand_dims(A_ksvd[:, j], axis=1) #64, 1
                 #x_tj = np.expand_dims(x[j, :], axis=0) #1, 1024
                 #Ek = Ek - aj.dot(x_tj)
-            Ek = Ek - A_ksvd.dot(x)
+            Ek = Ek - A_ksvd.dot(coef)
 
             Ek_ohm = Ek[:, wk]
             
             # Update A, x with SVD
             U, D, V = np.linalg.svd(Ek_ohm, full_matrices=True)
             A_ksvd[:, atom] = U[:, 0]
-            x[atom, wk] = (V[:, 0] * D[0]).T
+            coef[atom, wk] = (V[:, 0] * D[0]).T
             
     return (A_ksvd, False)
     
@@ -211,24 +209,32 @@ def residual_error(y_patches, A, x):
                 
 # Recover Image Patches Using OMP
 def recover_OMP(A, y_patches, m_patches, S=20):
-    patches_recovered = np.zeros((1024, 8, 8))
-    
+    patches_recovered = np.zeros((1024, 8, 8)) 
+    omp = OrthogonalMatchingPursuit(S, fit_intercept=False)
     for i in range(len(y_patches)):
-        patches_recovered[i] = A.dot(_OMP_Patch(A, y_patches[i], m_patches[i])).reshape((8, 8))
+        patches_recovered[i] = A.dot(_OMP_Patch(A, y_patches[i], m_patches[i], omp)).reshape((8, 8))
+        
     return recombine_patches(patches_recovered)
         
 # Orthogonal Matching Pursuit
-def _OMP_Patch(A, y_patch, m_patch, S=20):
+def _OMP_Patch(A, y_patch, m_patch, omp, S=20):
+   
     y_patch = y_patch.flatten()
-    m_patch = m_patch.flatten()
-    y_patch_masked = y_patch[np.where(m_patch != 0)]
-    A_masked = A[np.where(m_patch != 0)]
-    coef = orthogonal_mp(A_masked, y_patch_masked, n_nonzero_coefs=S)
-    return coef
+    m_patch = m_patch.flatten().astype(bool)
+    y_patch_masked = y_patch[m_patch]
+    A_masked = A[m_patch]
+    omp.fit(A_masked, y_patch_masked)
+    return omp.coef_
 
+# Returns Unit Norm Dictionary of Patches
+def random_dict(num_atoms=512, patch_size=8):
+    d = np.random.random(size=(patch_size*patch_size, num_atoms)).astype(np.float32) 
+    for i in range(num_atoms):
+        d[:, i] = d[:,i] / np.linalg.norm(d[:,i])
+    return d
 
 if __name__=='__main__':
-    #prepare_images()
+    prepare_images()
     
     (y_train, y_test, y_test_missing, m_test_missing) = load_images()
     
@@ -236,12 +242,13 @@ if __name__=='__main__':
     y_test = y_test / 255 
     y_test_missing = y_test_missing / 255
     
+    
     #calc_metrics(y_test, y_test_missing)
     
     y_patches_missing = extract_patches(y_test_missing)
     y_patches_test = extract_patches(y_test)
     m_patches = extract_patches(m_test_missing)
-    A_ksvd, converged = K_SVD(y_train, tol = 10, num_iter=16)
+    A_ksvd, converged = K_SVD(y_train, tol = 1e-3, num_iter=3)
     img_recovered = recover_OMP(A_ksvd, y_patches_missing, m_patches)
     #save_patches(np.asarray(y_patches), np.asarray(m_patches))
 
